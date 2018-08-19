@@ -67,8 +67,8 @@ if __name__ == '__main__': # Windows adaptations
 		elif(opt.dataset_mode=='jnd'):
 			(score, results_verbose) = dm.score_jnd_dataset(data_loader,model.forward)
 
-		# with open('ResultsFile.txt', 'w') as f:
-		# 	f.write('  Dataset [%s]: %.2f\n'%(dataset,100.*score))
+		with open('ResultsFile.txt', 'a') as f:
+			f.write('  Dataset [%s]: %.2f\n'%(dataset,100.*score))
 		print(' Dataset [%s]: %.2f'%(dataset,100.*score))
 
 	# 	i += 1
