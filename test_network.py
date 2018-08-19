@@ -13,7 +13,7 @@ model = dm.DistModel()
 
 # Linearly calibrated models
 #model.initialize(model='net-lin',net='squeeze',use_gpu=use_gpu,spatial=spatial)
-model.initialize(model='net-lin',net='alex',use_gpu=use_gpu,spatial=spatial)
+model.initialize(model='net',net='alex',use_gpu=use_gpu,spatial=spatial)
 #model.initialize(model='net-lin',net='vgg',use_gpu=use_gpu,spatial=spatial)
 
 # Off-the-shelf uncalibrated networks
@@ -27,9 +27,9 @@ model.initialize(model='net-lin',net='alex',use_gpu=use_gpu,spatial=spatial)
 print('Model [%s] initialized'%model.name())
 
 ## Example usage with dummy tensors
-dummy_im0 = torch.Tensor(1,3,64,64) # image should be RGB, normalized to [-1,1]
-dummy_im1 = torch.Tensor(1,3,64,64)
-dist = model.forward(dummy_im0,dummy_im1)
+# dummy_im0 = torch.Tensor(1,3,64,64) # image should be RGB, normalized to [-1,1]
+# dummy_im1 = torch.Tensor(1,3,64,64)
+# dist = model.forward(dummy_im0,dummy_im1)
 
 ## Example usage with images
 ex_ref = util.im2tensor(util.load_image('./imgs/ex_ref.png'))

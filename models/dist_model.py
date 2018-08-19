@@ -18,7 +18,7 @@ class DistModel(BaseModel):
     def name(self):
         return self.model_name
 
-    def initialize(self, model='net-lin', net='alex', pnet_rand=False, pnet_tune=False, model_path=None, colorspace='Lab', use_gpu=True, printNet=False, spatial=False, spatial_shape=None, spatial_order=1, spatial_factor=None, is_train=False, lr=.0001, beta1=0.5, version='0.1'):
+    def initialize(self, model='net-lin', net='alex', pnet_rand=False, pnet_tune=False, model_path=None, colorspace='Lab', use_gpu=True, printNet=False, spatial=False, spatial_shape=None, spatial_order=1, spatial_factor=None, is_train=False, lr=.0001, beta1=0.5, version='0.1',alt="Alt2"):
         '''
         INPUTS
             model - ['net-lin'] for linearly calibrated network
@@ -49,6 +49,7 @@ class DistModel(BaseModel):
         self.spatial_shape = spatial_shape
         self.spatial_order = spatial_order
         self.spatial_factor = spatial_factor
+        self.alt = alt
 
         self.model_name = '%s [%s]'%(model,net)
         if(self.model == 'net-lin'): # pretrained net + linear layer
@@ -65,7 +66,7 @@ class DistModel(BaseModel):
 
         elif(self.model=='net'): # pretrained network
             assert not self.spatial, 'spatial argument not supported yet for uncalibrated networks'
-            self.net = networks.PNet(use_gpu=use_gpu,pnet_type=net)
+            self.net = networks.PNet(use_gpu=use_gpu,pnet_type=net,alt=alt)
             self.is_fake_net = True
         elif(self.model in ['L2','l2']):
             self.net = networks.L2(use_gpu=use_gpu,colorspace=colorspace) # not really a network, only for testing
@@ -238,7 +239,7 @@ class DistModel(BaseModel):
 
 
 
-def score_2afc_dataset(data_loader,func):
+def score_2afc_dataset(alt,data_loader,func):
     ''' Function computes Two Alternative Forced Choice (2AFC) score using
         distance function 'func' in dataset 'data_loader'
     INPUTS
@@ -268,9 +269,25 @@ def score_2afc_dataset(data_loader,func):
         gts+=data['judge'].cpu().numpy().flatten().tolist()
         # bar.update(i)
 
+
     d0s = np.array(d0s)
     d1s = np.array(d1s)
     gts = np.array(gts)
+    if alt=="Alt13":
+        d0s_temp = []
+        d1s_temp = []
+        for j in range(0,d0s.size-1,3):
+            temp = d0s[j:j+3] < d1s[j:j+3]
+            if temp.sum() >= 2:
+                d0s_temp += [0]
+                d1s_temp += [1]
+            else:
+                d0s_temp += [1]
+                d1s_temp += [0]
+        d0s = d0s_temp
+        d1s = d1s_temp
+        d0s = np.array(d0s)
+        d1s = np.array(d1s)
     scores = (d0s<d1s)*(1.-gts) + (d1s<d0s)*gts + (d1s==d0s)*.5
 
     return(np.mean(scores), dict(d0s=d0s,d1s=d1s,gts=gts,scores=scores))

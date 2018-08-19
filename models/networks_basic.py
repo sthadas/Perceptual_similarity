@@ -8,15 +8,17 @@ from util import util
 from skimage import color
 from IPython import embed
 from . import pretrained_networks as pn
+from scipy import signal
+
 
 # Off-the-shelf deep network
 class PNet(nn.Module):
     '''Pre-trained network with all channels equally weighted by default'''
-    def __init__(self, pnet_type='vgg', pnet_rand=False, use_gpu=True):
+    def __init__(self, pnet_type='vgg', pnet_rand=False, use_gpu=True,alt="Alt2"):
         super(PNet, self).__init__()
 
         self.use_gpu = use_gpu
-
+        self.alt = alt
         self.pnet_type = pnet_type
         self.pnet_rand = pnet_rand
 
@@ -39,29 +41,379 @@ class PNet(nn.Module):
             self.shift = self.shift.cuda()
             self.scale = self.scale.cuda()
 
+    #############################################################################################
+    # Alternative 1 - Create covariance matrix of 2 features, calc the determinant and accumulate
+    #############################################################################################
+    def Alt1(self,kk,flat0,flat1,outs0):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            # print(idx)
+            vec0 = np.concatenate(flat0[0,idx,:,:])
+            vec1 = np.concatenate(flat1[0,idx,:,:])
+            covmat = np.cov(vec0,vec1)
+            cur_score += np.linalg.det(covmat)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 2 - Create covariance matrix of 2 features, calculate correlation coefficient and accumulate
+    ############################################################################################
+    def Alt2(self,kk,flat0,flat1,outs0,img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            vec0 = np.concatenate(flat0[img,idx,:,:])
+            vec1 = np.concatenate(flat1[img,idx,:,:])
+            covmat = np.cov(vec0,vec1)
+            if covmat[0, 0]!=0 and covmat[1, 1] != 0:
+                cur_score += np.abs(covmat[1, 0]/np.sqrt(covmat[1, 1] * covmat[0, 0])) # Absolute value of correlation coefficient
+            elif covmat[0, 0]==0 and covmat[1, 1] == 0:  # Two constants -> high correlation
+                cur_score += 1
+        return cur_score
+
+    ############################################################################################
+    # Alternative 3 - Use the original method (cos_sim) and correlation coefficient
+    ############################################################################################
+    def Alt3(self,kk,flat0,flat1,outs0,outs1,img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            vec0 = np.concatenate(flat0[img,idx,:,:])
+            vec1 = np.concatenate(flat1[img,idx,:,:])
+            vec0 = (vec0-np.mean(vec0))/(np.sqrt(np.cov(vec0)+1e-5))
+            vec1 = (vec1-np.mean(vec1))/(np.sqrt(np.cov(vec1)+1e-5))
+            covmat = np.cov(vec0,vec1)
+            if covmat[0, 0] != 0 and covmat[1, 1] != 0:
+                cur_score += 1. - (covmat[1, 0]/np.sqrt(covmat[1, 1] * covmat[0, 0])) # Absolute value of correlation coefficient
+            elif covmat[0, 0] == 0 and covmat[1, 1] == 0:  # Two constants -> high correlation
+                cur_score += 0
+            else:
+                cur_score += 1
+        cur_score = cur_score/(((outs0[kk]).size())[1])
+        cur_score_orig = (1.-util.cos_sim((outs0[kk])[img].reshape(1,(outs0[kk]).size()[1],(outs0[kk]).size()[2],(outs0[kk]).size()[3]),(outs1[kk])[img].reshape(1,(outs0[kk]).size()[1],(outs0[kk]).size()[2],(outs0[kk]).size()[3])))
+        return (cur_score+cur_score_orig.item())/2
+
+    ############################################################################################
+    # Alternative 4 - Sum and compare each feature's matrix Eigenvalues
+    ############################################################################################
+    def Alt4(self,kk,flat0,flat1,outs0,img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            eig_sum0 = np.linalg.eig(flat0[img, idx, :, :])[0].sum()
+            eig_sum1 = np.linalg.eig(flat1[img, idx, :, :])[0].sum()
+            cur_score += np.abs(eig_sum0 - eig_sum1)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 5 - Sum each feature's matrix values and compare
+    ############################################################################################
+    def Alt5(self,kk,flat0,flat1,outs0,img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            sum0 = (flat0[img, idx, :, :]).sum()
+            sum1 = (flat1[img, idx, :, :]).sum()
+            cur_score += np.abs(sum0 - sum1)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 6 - Multiply inverse distorted matrix with ref and calc L2 with I
+    ############################################################################################
+    def Alt6(self, kk, flat0, flat1, outs0, img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            psinv = np.linalg.pinv(flat1[img, idx, :, :])
+            mul_res = (flat0[img, idx, :, :])*psinv
+            I = np.identity(mul_res.__len__())
+            cur_score += np.linalg.norm(mul_res - I)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 7 - Calculate correlation coefficient over rows & cols and sum up
+    ############################################################################################
+    def Alt7(self, kk, flat0, flat1, outs0, img):
+        cur_score = 0
+        for idx in range(((outs0[kk]).size())[1]):
+            for row in range(((outs0[kk]).size())[2]):
+                vec_rows0 = flat0[img,idx,row,:]
+                vec_rows1 = flat1[img,idx,row,:]
+                covmat_rows = np.cov(vec_rows0,vec_rows1)
+                if covmat_rows[0, 0]!=0 and covmat_rows[1, 1] != 0:
+                    cur_score += np.abs(covmat_rows[1, 0]/np.sqrt(covmat_rows[1, 1] * covmat_rows[0, 0])) # Absolute value of correlation coefficient
+                elif covmat_rows[0, 0]==0 and covmat_rows[1, 1] == 0:  # Two constants -> high correlation
+                    cur_score += 1
+            for col in range(((outs0[kk]).size())[3]):
+                vec_cols0 = flat0[img, idx, :, col]
+                vec_cols1 = flat1[img, idx, :, col]
+                covmat_cols = np.cov(vec_cols0, vec_cols1)
+                if covmat_cols[0, 0] != 0 and covmat_cols[1, 1] != 0:
+                    cur_score += np.abs(covmat_cols[1, 0] / np.sqrt(covmat_cols[1, 1] * covmat_cols[0, 0]))  # Absolute value of correlation coefficient
+                elif covmat_cols[0, 0] == 0 and covmat_cols[1, 1] == 0:  # Two constants -> high correlation
+                    cur_score += 1
+        return cur_score
+
+    ############################################################################################
+    # Alternative 8 - Calculate correlation coefficient over a neighbourhood of 3 (optional)
+    ############################################################################################
+    def Alt8(self, kk, flat0, flat1, outs0, img):
+        cur_score = 0
+        neighbourhood = 3
+        for feat in range(((outs0[kk]).size())[1]):
+            for row in range(((outs0[kk]).size())[2]-(neighbourhood-1)):
+                for col in range(((outs0[kk]).size())[3]-(neighbourhood-1)):
+                    mini_mat0 = flat0[img,feat,row:row+neighbourhood-1,col:col+neighbourhood-1]
+                    mini_mat1 = flat1[img,feat,row:row+neighbourhood-1,col:col+neighbourhood-1]
+                    vec0 = np.concatenate(mini_mat0[:, :])
+                    vec1 = np.concatenate(mini_mat1[:, :])
+                    covmat = np.cov(vec0, vec1)
+                    if covmat[0, 0] != 0 and covmat[1, 1] != 0:
+                        cur_score += np.abs(covmat[1, 0] / np.sqrt(covmat[1, 1] * covmat[0, 0]))  # Absolute value of correlation coefficient
+                    elif covmat[0, 0] == 0 and covmat[1, 1] == 0:  # Two constants -> high correlation
+                        cur_score += 1
+        return cur_score
+
+    ############################################################################################
+    #                               Tensor Ops                                                 #
+    ############################################################################################
+
+    ############################################################################################
+    # Alternative 9 - Like Alt7 but with tensor operations
+    ############################################################################################
+    # TBD - Needs to be centered around the mean of each row/col
+    def Alt9(self, kk, outs0, outs1):
+        prod = torch.mul(outs0,outs1)
+        outs0_squared = torch.pow(outs0,2)
+        outs1_squared = torch.pow(outs1,2)
+        outs0_row_var = torch.sqrt(torch.sum(outs0_squared,2))
+        outs1_row_var = torch.sqrt(torch.sum(outs1_squared,2))
+        cov_rows = torch.sum(prod,2)
+        correlation_coeff_rows = torch.div(cov_rows,torch.mul(outs0_row_var,outs1_row_var))
+        correlation_coeff_rows[correlation_coeff_rows != correlation_coeff_rows] = 0
+        correlation_coeff_rows = torch.sum(torch.abs(correlation_coeff_rows),(2,1))
+        outs0_cols_var = torch.sqrt(torch.sum(outs0_squared,3))
+        outs1_cols_var = torch.sqrt(torch.sum(outs1_squared,3))
+        cov_cols = torch.sum(prod,3)
+        correlation_coeff_cols = torch.div(cov_cols,torch.mul(outs0_cols_var,outs1_cols_var))
+        correlation_coeff_cols[correlation_coeff_cols != correlation_coeff_cols] = 0
+        correlation_coeff_cols = torch.sum(torch.abs(correlation_coeff_cols),(2,1))
+        return torch.reciprocal(torch.add(correlation_coeff_cols,1,correlation_coeff_rows))
+
+    ############################################################################################
+    # Alternative 10 - Like Alt2 but with tensor operations
+    ############################################################################################
+    def Alt10(self,kk, outs0, outs1):
+        outs0_reshaped = torch.reshape(outs0,[(outs0.size())[0],(outs0.size())[1],(outs0.size())[2]*(outs0.size())[3]])
+        outs1_reshaped = torch.reshape(outs1,[(outs1.size())[0],(outs1.size())[1],(outs1.size())[2]*(outs1.size())[3]])
+        outs0_means = torch.mean(outs0_reshaped,2)
+        outs0_means = torch.reshape(outs0_means,[(outs0.size())[0],(outs0.size())[1],1,1])
+        outs0_means = outs0_means.expand_as(outs0)
+        outs1_means = torch.mean(outs1_reshaped,2)
+        outs1_means = torch.reshape(outs1_means,[(outs1.size())[0],(outs1.size())[1],1,1])
+        outs1_means = outs1_means.expand_as(outs1)
+        outs0_centered = torch.add(outs0,-1,outs0_means)
+        outs1_centered = torch.add(outs1,-1,outs1_means)
+        prod = torch.mul(outs0_centered,outs1_centered)
+        outs0_squared = torch.pow(outs0_centered,2)
+        outs1_squared = torch.pow(outs1_centered,2)
+        outs0_mat_var = torch.sqrt(torch.sum(outs0_squared,(2,3)))
+        outs1_mat_var = torch.sqrt(torch.sum(outs1_squared,(2,3)))
+        cov = torch.sum(prod,(2,3))
+        correlation_coeff = torch.div(cov,torch.mul(outs0_mat_var,outs1_mat_var))
+        both_consts = torch.mul(correlation_coeff!=correlation_coeff,cov==0)
+        correlation_coeff[correlation_coeff!=correlation_coeff] = 0
+        # correlation_coeff[both_consts==1] = 1
+        correlation_coeff_tot = torch.sum(torch.abs(correlation_coeff),1)
+        # correlation_coeff_tot = torch.div(correlation_coeff_tot,(outs0.size())[1])
+        # correlation_coeff_tot = torch.abs(torch.add(correlation_coeff_tot,-1))
+        return correlation_coeff_tot
+
+    ############################################################################################
+    # Alternative 11 - Like Alt3 but with tensor operations
+    ############################################################################################
+    def Alt11(self,kk, outs0, outs1):
+        cov_score = self.Alt10(self,outs0,outs1)
+        cov_score = torch.div(cov_score,(outs0.size())[1])
+        cov_score = 1.-cov_score
+        cos_sim_score = (1.-util.cos_sim(outs0,outs1))
+        total_score = torch.div(torch.add(cov_score,1,cos_sim_score),2)
+        return total_score
+
+    ############################################################################################
+    # Alternative 12 - Like Alt5 but with tensor operations
+    ############################################################################################
+    def Alt12(self,kk, outs0, outs1):
+        outs0_sum = torch.sum(outs0,(2,3))
+        outs1_sum = torch.sum(outs1,(2,3))
+        diff = torch.abs(torch.add(outs0_sum,-1,outs1_sum))
+        return torch.sum(diff,1)
+
+    ############################################################################################
+    # Alternative 13 - A combination of cos_sim, L1 diff, and cov
+    ############################################################################################
+    def Alt13(self,kk, outs0, outs1):
+        sum_res = self.Alt12(kk,outs0,outs1)
+        cos_sim_score = (1. - util.cos_sim(outs0, outs1))
+        cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
+        return torch.stack((sum_res,cos_sim_score,cov_res),1)
+
+
     def forward(self, in0, in1, retPerLayer=False):
+        is_median = False
+        alt = self.alt
         in0_sc = (in0 - self.shift.expand_as(in0))/self.scale.expand_as(in0)
         in1_sc = (in1 - self.shift.expand_as(in0))/self.scale.expand_as(in0)
 
         outs0 = self.net.forward(in0_sc)
         outs1 = self.net.forward(in1_sc)
-
+        res_arr = []
         if(retPerLayer):
             all_scores = []
+        img = 0 #temp
+
+        # for img in range (((outs0[0]).size())[0]):
         for (kk,out0) in enumerate(outs0):
-            cur_score = (1.-util.cos_sim(outs0[kk],outs1[kk]))
+            num_img = ((outs0[kk]).size())[0]  # for batch size != 1
+            ten = torch.ones((num_img,), dtype=torch.float64)
+            if is_median:
+                temp_arr = outs0[kk].cpu().data.numpy()
+                sz = (temp_arr.size())[2]
+                flat0 = signal.medfilt(temp_arr,[1,1,3,3])[0,:,1:sz-1,1:sz-1]
+                temp_arr = outs1[kk].cpu().data.numpy()
+                flat1 = signal.medfilt(temp_arr,[1,1,3,3])[0,:,1:sz-1,1:sz-1]
+            else:
+                flat0 = (util.normalize_tensor(outs0[kk])).cpu().data.numpy()
+                flat1 = (util.normalize_tensor(outs1[kk])).cpu().data.numpy()
+
+            if alt == "Alt1":
+                cur_score = self.Alt1(kk,flat0,flat1,outs0)
+            elif alt == "Alt2":
+                cur_score = self.Alt2(kk, flat0, flat1, outs0,img)
+            elif alt == "Alt3":
+                cur_score = self.Alt3(kk, flat0, flat1, outs0,outs1, img)
+            elif alt == "Alt4":
+                cur_score = self.Alt4(kk, outs0[kk].cpu().data.numpy(), outs1[kk].cpu().data.numpy(), outs0, img)
+            elif alt == "Alt5":
+                cur_score = self.Alt5(kk, flat0, flat1, outs0, img)
+            elif alt == "Alt6":
+                cur_score = self.Alt6(kk, flat0, flat1, outs0, img)
+            elif alt == "Alt7":
+                cur_score = self.Alt7(kk, flat0, flat1, outs0, img)
+            elif alt == "Alt8":
+                cur_score = self.Alt8(kk, flat0, flat1, outs0, img)
+            elif alt == "Alt9":
+                cur_score = self.Alt9(kk, outs0[kk], outs1[kk])
+            elif alt == "Alt10":
+                cur_score = self.Alt10(kk, outs0[kk], outs1[kk])
+            elif alt == "Alt11":
+                cur_score = self.Alt11(kk, outs0[kk], outs1[kk])
+            elif alt == "Alt12":
+                cur_score = self.Alt12(kk, outs0[kk], outs1[kk])
+            elif alt == "Alt13":
+                cur_score = self.Alt13(kk, outs0[kk], outs1[kk])
+                #############################################################################################
+                # Alternative 1 - Create covariance matrix of 2 features, calc the determinant and accumulate
+                # Result tensor
+                # ten = torch.ones((1,), dtype=torch.float64)
+                # # Normalization
+                # flat0 = (util.normalize_tensor(outs0[kk])).cpu().data.numpy()
+                # flat1 = (util.normalize_tensor(outs1[kk])).cpu().data.numpy()
+                # cur_score = 0
+                # for idx in range(((outs0[kk]).size())[1]):
+                #     # print(idx)
+                #     vec0 = np.concatenate(flat0[0,idx,:,:])
+                #     vec1 = np.concatenate(flat1[0,idx,:,:])
+                #     covmat = np.cov(vec0,vec1)
+                #     cur_score += np.linalg.det(covmat)
+                    # print('covmat: {0}'.format(covmat))
+                ############################################################################################
+                # Alternative 2 - Create covariance matrix of 2 features, take only the covariance value
+                # (cell (2,1) in the cov matrix) and accumulate
+                # Alt2 = 1
+                # num_img = ((outs0[kk]).size())[0] # for batch size != 1
+                # ten = torch.ones((num_img,), dtype=torch.float64)
+                # # Normalization
+                # flat0 = (util.normalize_tensor(outs0[kk])).cpu().data.numpy()
+                # flat1 = (util.normalize_tensor(outs1[kk])).cpu().data.numpy()
+                # cur_score = 0
+                # for img in range (((outs0[kk]).size())[0]):
+                #     for idx in range(((outs0[kk]).size())[1]):
+                #         # print(idx)
+                #         vec0 = np.concatenate(flat0[img,idx,:,:])
+                #         vec1 = np.concatenate(flat1[img,idx,:,:])
+                #         covmat = np.cov(vec0,vec1)
+                #         if covmat[0, 0]!=0 and covmat[1, 1] != 0:
+                #             cur_score += np.abs(covmat[1, 0]/np.sqrt(covmat[1, 1] * covmat[0, 0])) # Absolute value of correlation coefficient
+                #         elif covmat[0, 0]==0 and covmat[1, 1] == 0:  # Two constants -> high correlation
+                #             cur_score += 1
+                #     print('covmat: {0}'.format(covmat))
+                ############################################################################################
+                ############################################################################################
+                # Alternative 3 - Use the original method (cos_sim) and correlation coefficient
+                # Alt3 = 1
+                # num_img = ((outs0[kk]).size())[0] # for batch size != 1
+                #
+                # # Normalization
+                # # flat0 = (util.normalize_tensor(outs0[kk])).cpu().data.numpy()
+                # # flat1 = (util.normalize_tensor(outs1[kk])).cpu().data.numpy()
+                # flat0 = outs0[kk].cpu().data.numpy()
+                # flat1 = outs1[kk].cpu().data.numpy()
+                # cur_score = 0
+                # for img in range(((outs0[kk]).size())[0]):
+                #     for idx in range(((outs0[kk]).size())[1]):
+                #         # print(idx)
+                #         vec0 = np.concatenate(flat0[img,idx,:,:])
+                #         vec1 = np.concatenate(flat1[img,idx,:,:])
+                #         vec0 = (vec0-np.mean(vec0))/(np.sqrt(np.cov(vec0)+1e-5))
+                #         vec1 = (vec1-np.mean(vec1))/(np.sqrt(np.cov(vec1)+1e-5))
+                #         covmat = np.cov(vec0,vec1)
+                #         if covmat[0, 0] != 0 and covmat[1, 1] != 0:
+                #             cur_score += 1. - (covmat[1, 0]/np.sqrt(covmat[1, 1] * covmat[0, 0])) # Absolute value of correlation coefficient
+                #         elif covmat[0, 0] == 0 and covmat[1, 1] == 0:  # Two constants -> high correlation
+                #             cur_score += 0
+                #         else:
+                #             cur_score += 1
+                # cur_score_org = (1.-util.cos_sim(outs0[kk],outs1[kk]))
+                #     print('covmat: {0}'.format(covmat))
+                ############################################################################################
+                # Alternative 4 - Sum and compare each feature's matrix Eigenvalues
+                ############################################################################################
+                # Alt4 = 1
+                # flat0 = outs0[kk].cpu().data.numpy()
+                # flat1 = outs1[kk].cpu().data.numpy()
+                # cur_score = 0
+                # for img in range(((outs0[kk]).size())[0]):
+                #     for idx in range(((outs0[kk]).size())[1]):
+                #         eig_sum0 = np.linalg.eig(flat0[img,idx,:,:])[0].sum()
+                #         eig_sum1 = np.linalg.eig(flat1[img,idx,:,:])[0].sum()
+                #         cur_score += np.abs(eig_sum0 - eig_sum1)
+                ############################################################################################
+                # Original Code
+                # cur_score = (1.-util.cos_sim(outs0[kk],outs1[kk]))
+                ############################################################################################
             if(kk==0):
                 val = 1.*cur_score
             else:
-                # val = val + self.lambda_feat_layers[kk]*cur_score
                 val = val + cur_score
-            if(retPerLayer):
-                all_scores+=[cur_score]
 
         if(retPerLayer):
-            return (val, all_scores)
-        else:
+            all_scores+=[cur_score]
+        if alt in ["Alt6", "Alt5", "Alt4", "Alt3"]:
+            res_arr += [val]
+        elif alt in ["Alt8", "Alt7", "Alt2"]:
+            res_arr += [1/val]
+        elif alt in ["Alt1"]:
+            res_arr += 1-val
+        # if alt in ["Alt6","Alt5","Alt4","Alt3"]:
+        #     val = ten.new_tensor((1,), val, dtype=torch.float64)
+        # elif alt in ["Alt8","Alt7","Alt2"]:
+        #     val = ten.new_full((1,), 1/val, dtype=torch.float64)
+        # elif alt in ["Alt1"]:
+        #     val = ten.new_full((1,), 1-val, dtype=torch.float64)
+
+        if alt in ["Alt9","Alt10"]:
+            return torch.reciprocal(val)
+        elif alt in ["Alt11","Alt12","Alt13"]:
             return val
+        if(retPerLayer):
+            return (ten.new_tensor(res_arr,dtype=torch.float64), all_scores)
+        else:
+            return ten.new_tensor(res_arr,dtype=torch.float64)
 
 # Learned perceptual metric
 class PNetLin(nn.Module):

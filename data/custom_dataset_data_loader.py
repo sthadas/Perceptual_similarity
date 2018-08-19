@@ -3,12 +3,12 @@ from data.base_data_loader import BaseDataLoader
 import os
 
 def CreateDataset(dataroots,dataset_mode='2afc',load_size=64,):
-    dataset = None
+  #  dataset = None
     if dataset_mode=='2afc': # human judgements
-        from dataset.twoafc_dataset import TwoAFCDataset
+        from data.dataset.twoafc_dataset import TwoAFCDataset
         dataset = TwoAFCDataset()
     elif dataset_mode=='jnd': # human judgements
-        from dataset.jnd_dataset import JNDDataset
+        from data.dataset.jnd_dataset import JNDDataset
         dataset = JNDDataset()
     else:
         raise ValueError("Dataset Mode [%s] not recognized."%self.dataset_mode)
@@ -20,7 +20,7 @@ class CustomDatasetDataLoader(BaseDataLoader):
     def name(self):
         return 'CustomDatasetDataLoader'
 
-    def initialize(self, datafolders, dataroot='./dataset',dataset_mode='2afc',load_size=64,batch_size=1,serial_batches=True, nThreads=1):
+    def initialize(self, datafolders, dataroot='.\scripts\dataset',dataset_mode='2afc',load_size=64,batch_size=1,serial_batches=True, nThreads=1):
         BaseDataLoader.initialize(self)
         if(not isinstance(datafolders,list)):
             datafolders = [datafolders,]

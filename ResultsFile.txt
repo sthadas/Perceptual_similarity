@@ -1,0 +1,1 @@
+  Dataset [val/cnn]: 53.34

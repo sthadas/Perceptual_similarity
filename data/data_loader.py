@@ -1,4 +1,4 @@
-def CreateDataLoader(datafolder,dataroot='./dataset',dataset_mode='2afc',load_size=64,batch_size=1,serial_batches=True):
+def CreateDataLoader(datafolder,dataroot='./scripts/dataset',dataset_mode='2afc',load_size=64,batch_size=1,serial_batches=True):
     from data.custom_dataset_data_loader import CustomDatasetDataLoader
     data_loader = CustomDatasetDataLoader()
     # print(data_loader.name())

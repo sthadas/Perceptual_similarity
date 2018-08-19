@@ -2,7 +2,21 @@ import numpy as np
 from models import dist_model as dm
 from data import data_loader as dl
 import argparse
+# from threading import Thread
+# from multiprocessing.pool import ThreadPool
+
+from time import sleep
+
 from IPython import embed
+
+# def threaded_function(dataset):
+# 	data_loader = dl.CreateDataLoader(dataset, dataset_mode=opt.dataset_mode, batch_size=opt.batch_size)
+#
+# 	# evaluate model on data
+# 	if (opt.dataset_mode == '2afc'):
+# 		(score, results_verbose) = dm.score_2afc_dataset(data_loader, model.forward)
+# 	elif (opt.dataset_mode == 'jnd'):
+# 		(score, results_verbose) = dm.score_jnd_dataset(data_loader, model.forward)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_mode', type=str, default='2afc', help='[2afc,jnd]')
@@ -17,6 +31,8 @@ parser.add_argument('--model_path', type=str, default=None, help='location of mo
 parser.add_argument('--from_scratch', action='store_true', help='model was initialized from scratch')
 parser.add_argument('--train_trunk', action='store_true', help='model trunk was trained/tuned')
 parser.add_argument('--version', type=str, default='0.1', help='v0.1 is latest, v0.0 was original release')
+parser.add_argument('--alt', type=str, default='Alt2', help='choose an alternative for the loss function')
+
 
 opt = parser.parse_args()
 if(opt.model in ['l2','ssim']):
@@ -25,7 +41,7 @@ if(opt.model in ['l2','ssim']):
 # initialize model
 model = dm.DistModel()
 # model.initialize(model=opt.model,net=opt.net,colorspace=opt.colorspace,model_path=opt.model_path,use_gpu=opt.use_gpu)
-model.initialize(model=opt.model,net=opt.net,colorspace=opt.colorspace,model_path=opt.model_path,use_gpu=opt.use_gpu, pnet_rand=opt.from_scratch, pnet_tune=opt.train_trunk, version=opt.version)
+model.initialize(model=opt.model,net=opt.net,colorspace=opt.colorspace,model_path=opt.model_path,use_gpu=opt.use_gpu, pnet_rand=opt.from_scratch, pnet_tune=opt.train_trunk, version=opt.version, alt=opt.alt)
 
 if(opt.model in ['net-lin','net']):
 	print('Testing model [%s]-[%s]'%(opt.model,opt.net))
@@ -34,15 +50,31 @@ elif(opt.model in ['l2','ssim']):
 
 # embed()
 # initialize data loader
-for dataset in opt.datasets:
-	data_loader = dl.CreateDataLoader(dataset,dataset_mode=opt.dataset_mode, batch_size=opt.batch_size)
+if __name__ == '__main__': # Windows adaptations
+	# pool = ThreadPool(processes=len(opt.datasets))
+	# async_result = [None]*len(opt.datasets)
+	# i=0
+	# j=0
+	for dataset in opt.datasets:
+		# print ("Running dataset {0}".format(dataset))
+		# async_result[i] = pool.apply_async(threaded_function, (dataset,))
 
-	# evaluate model on data
-	if(opt.dataset_mode=='2afc'):
-		(score, results_verbose) = dm.score_2afc_dataset(data_loader,model.forward)
-	elif(opt.dataset_mode=='jnd'):
-		(score, results_verbose) = dm.score_jnd_dataset(data_loader,model.forward)
+		data_loader = dl.CreateDataLoader(dataset,dataset_mode=opt.dataset_mode, batch_size=opt.batch_size)
 
-	# print results
-	print('  Dataset [%s]: %.2f'%(dataset,100.*score))
+		# evaluate model on data
+		if(opt.dataset_mode=='2afc'):
+			(score, results_verbose) = dm.score_2afc_dataset(opt.alt,data_loader,model.forward)
+		elif(opt.dataset_mode=='jnd'):
+			(score, results_verbose) = dm.score_jnd_dataset(data_loader,model.forward)
 
+		# with open('ResultsFile.txt', 'w') as f:
+		# 	f.write('  Dataset [%s]: %.2f\n'%(dataset,100.*score))
+		print(' Dataset [%s]: %.2f'%(dataset,100.*score))
+
+	# 	i += 1
+	# for dataset in opt.datasets:
+	# 	(score, results_verbose) = async_result[j].get()
+	# 	with open("ResltsFile.txt", "w") as f:
+	# 		f.write('  Dataset [%s]: %.2f'%(dataset,100.*score))
+	# 	print('  Dataset [%s]: %.2f'%(dataset,100.*score))
+	# 	j += 1
