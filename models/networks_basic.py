@@ -175,29 +175,65 @@ class PNet(nn.Module):
     ############################################################################################
     # Alternative 9 - Like Alt7 but with tensor operations
     ############################################################################################
-    # TBD - Needs to be centered around the mean of each row/col
     def Alt9(self, kk, outs0, outs1):
-        prod = torch.mul(outs0,outs1)
-        outs0_squared = torch.pow(outs0,2)
-        outs1_squared = torch.pow(outs1,2)
-        outs0_row_var = torch.sqrt(torch.sum(outs0_squared,2))
-        outs1_row_var = torch.sqrt(torch.sum(outs1_squared,2))
-        cov_rows = torch.sum(prod,2)
-        correlation_coeff_rows = torch.div(cov_rows,torch.mul(outs0_row_var,outs1_row_var))
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        # transposed_outs0 = torch.transpose(outs0,2,3) # transpose each feature's matrix for columns mean calculation
+        # transposed_outs1 = torch.transpose(outs1,2,3) # transpose each feature's matrix for columns mean calculation
+        outs0_row_means = torch.mean(outs0,3,True)
+        outs0_row_means = outs0_row_means.expand_as(outs0)
+        outs0_col_means = torch.mean(outs0,2,True)
+        outs0_col_means = outs0_col_means.expand_as(outs0)
+        # outs0_col_means = torch.mean(transposed_outs0,3)
+        # outs0_col_means = torch.transpose(outs0_col_means.expand_as(outs0),2,3)
+        outs1_row_means = torch.mean(outs1,3,True)
+        outs1_row_means = outs1_row_means.expand_as(outs1)
+        outs1_col_means = torch.mean(outs1,2,True)
+        outs1_col_means = outs1_col_means.expand_as(outs1)
+        # outs1_col_means = torch.mean(transposed_outs1,2,True)
+        # outs1_col_means = torch.transpose(outs1_col_means.expand_as(outs1),2,3)
+        outs0_row_centered = torch.add(outs0,-1,outs0_row_means)
+        outs0_col_centered = torch.add(outs0,-1, outs0_col_means)
+        outs1_row_centered = torch.add(outs1,-1,outs1_row_means)
+        outs1_col_centered = torch.add(outs1,-1, outs1_col_means)
+        # outs0_centered = torch.add(outs0,-1,outs0_row_means+outs0_col_means)
+        # outs1_centered = torch.add(outs1,-1,outs1_row_means+outs1_col_means)
+        # prod = torch.mul(outs0_centered,outs1_centered)
+        prod_rows = torch.mul(outs0_row_centered,torch.transpose(outs1_row_centered,2,3))
+        prod_cols = torch.mul(torch.transpose(outs0_col_centered,2,3),outs1_col_centered)
+        cov_row_vec = torch.diagonal(prod_rows,0,2,3)
+        cov_col_vec = torch.diagonal(prod_cols,0,2,3)
+        cov_rows = torch.sum(cov_row_vec,2)
+        cov_cols = torch.sum(cov_col_vec,2)
+        outs0_row_squared = torch.pow(outs0_row_centered,2)
+        outs1_row_squared = torch.pow(outs1_row_centered,2)
+        outs0_col_squared = torch.pow(outs0_col_centered,2)
+        outs1_col_squared = torch.pow(outs1_col_centered,2)
+        outs0_row_var = torch.sqrt(torch.sum(outs0_row_squared,2))
+        outs1_row_var = torch.sqrt(torch.sum(outs1_row_squared,2))
+        # cov_rows = torch.sum(prod,2)
+        outs0_row_var_exp = torch.unsqueeze(outs0_row_var, 2)
+        outs1_row_var_exp = torch.unsqueeze(outs1_row_var, 2)
+        correlation_coeff_rows = torch.div(torch.unsqueeze(torch.unsqueeze(cov_rows,2),3),torch.matmul(outs0_row_var_exp,torch.transpose(outs1_row_var_exp,2,3)))
         correlation_coeff_rows[correlation_coeff_rows != correlation_coeff_rows] = 0
         correlation_coeff_rows = torch.sum(torch.abs(correlation_coeff_rows),(2,1))
-        outs0_cols_var = torch.sqrt(torch.sum(outs0_squared,3))
-        outs1_cols_var = torch.sqrt(torch.sum(outs1_squared,3))
-        cov_cols = torch.sum(prod,3)
-        correlation_coeff_cols = torch.div(cov_cols,torch.mul(outs0_cols_var,outs1_cols_var))
+        outs0_col_var = torch.sqrt(torch.sum(outs0_col_squared,3))
+        outs1_col_var = torch.sqrt(torch.sum(outs1_col_squared,3))
+        outs0_col_var_exp = torch.unsqueeze(outs0_col_var, 2)
+        outs1_col_var_exp = torch.unsqueeze(outs1_col_var, 2)
+        # cov_cols = torch.sum(prod,3)
+        correlation_coeff_cols = torch.div(torch.unsqueeze(torch.unsqueeze(cov_cols,2),3),torch.matmul(outs0_col_var_exp,torch.transpose(outs1_col_var_exp,2,3)))
         correlation_coeff_cols[correlation_coeff_cols != correlation_coeff_cols] = 0
         correlation_coeff_cols = torch.sum(torch.abs(correlation_coeff_cols),(2,1))
-        return torch.reciprocal(torch.add(correlation_coeff_cols,1,correlation_coeff_rows))
+        # return torch.reciprocal(torch.add(correlation_coeff_cols,1,correlation_coeff_rows))
+        return torch.squeeze(torch.add(correlation_coeff_cols, 1, correlation_coeff_rows))
 
     ############################################################################################
     # Alternative 10 - Like Alt2 but with tensor operations
     ############################################################################################
     def Alt10(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
         outs0_reshaped = torch.reshape(outs0,[(outs0.size())[0],(outs0.size())[1],(outs0.size())[2]*(outs0.size())[3]])
         outs1_reshaped = torch.reshape(outs1,[(outs1.size())[0],(outs1.size())[1],(outs1.size())[2]*(outs1.size())[3]])
         outs0_means = torch.mean(outs0_reshaped,2)
@@ -227,7 +263,9 @@ class PNet(nn.Module):
     # Alternative 11 - Like Alt3 but with tensor operations
     ############################################################################################
     def Alt11(self,kk, outs0, outs1):
-        cov_score = self.Alt10(self,outs0,outs1)
+        cov_score = self.Alt10(kk,outs0,outs1)
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
         cov_score = torch.div(cov_score,(outs0.size())[1])
         cov_score = 1.-cov_score
         cos_sim_score = (1.-util.cos_sim(outs0,outs1))
@@ -238,20 +276,100 @@ class PNet(nn.Module):
     # Alternative 12 - Like Alt5 but with tensor operations
     ############################################################################################
     def Alt12(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
         outs0_sum = torch.sum(outs0,(2,3))
         outs1_sum = torch.sum(outs1,(2,3))
         diff = torch.abs(torch.add(outs0_sum,-1,outs1_sum))
         return torch.sum(diff,1)
 
     ############################################################################################
+    # Alternative 14 - Like Alt4 but with tensor operations
+    ############################################################################################
+    def Alt14(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        res0 = []
+        res1 = []
+        for batch_size in range(outs0.size(0)):
+            for feature in range(outs0.size(1)):
+                eigval0, _ = torch.eig(outs0[batch_size, feature, :, :])
+                res0.append(torch.max(eigval0))
+                eigval1, _ = torch.eig(outs1[batch_size, feature, :, :])
+                res1.append(torch.max(eigval1))
+        res0 = torch.stack(res0).view(outs0.size(0), outs0.size(1))
+        res1 = torch.stack(res1).view(outs1.size(0), outs1.size(1))
+        return torch.sum(torch.abs(torch.add(res0,-1,res1)),1)
+
+    ############################################################################################
+    # Alternative 15 - Like Alt4 but with tensor operations and more specific calculation
+    ############################################################################################
+    def Alt15(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        res = []
+        for batch_size in range(outs0.size(0)):
+            temp_res = []
+            for feature in range(outs0.size(1)):
+                eigval0, _ = torch.eig(outs0[batch_size, feature, :, :])
+                sorted_eigval0, _ = torch.sort(torch.norm(eigval0,2,1),0,True);
+                eigval1, _ = torch.eig(outs1[batch_size, feature, :, :])
+                sorted_eigval1, _ = torch.sort(torch.norm(eigval1,2,1),0,True);
+                temp_res.append(torch.dist(sorted_eigval0,sorted_eigval1).item())
+            tensor_temp = torch.tensor(temp_res, dtype=torch.float64, device=torch.device('cuda:0'))
+            res.append((torch.sum(tensor_temp)).item())
+        return (torch.tensor(res,dtype=torch.float64,device=torch.device('cuda:0'))).float()
+    ############################################################################################
     # Alternative 13 - A combination of cos_sim, L1 diff, and cov
     ############################################################################################
     def Alt13(self,kk, outs0, outs1):
-        sum_res = self.Alt12(kk,outs0,outs1)
-        cos_sim_score = (1. - util.cos_sim(outs0, outs1))
-        cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
-        return torch.stack((sum_res,cos_sim_score,cov_res),1)
+        # sum_res = self.Alt12(kk,outs0,outs1)
+        # cos_sim_score = (1. - util.cos_sim(outs0, outs1))
+        # cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
+        # return torch.stack((sum_res,cos_sim_score,cov_res),1)
+        sum_res = self.Alt12(kk, outs0, outs1)
+        print("finished running alt. #1 of 3...")
+        cos_corr = self.Alt11(kk, outs0, outs1)
+        print("finished running alt. #2 of 3...")
+        eig_vals = self.Alt15(kk, outs0, outs1)
+        print("finished running alt. #3 of 3...")
+        return torch.stack((sum_res, cos_corr, eig_vals), 1)
 
+    ############################################################################################
+    # Alternative 16 - Calculate correlation coefficient over a neighbourhood of 3 (optional) with tensor operations
+    ############################################################################################
+    def Alt16(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        cur_score = 0
+        neighbourhood = 3
+        correlation_coeff_tot = torch.zeros(250,dtype=torch.float64,device=torch.device('cuda:0'))
+        for row in range(((outs0[kk]).size())[2]-(neighbourhood-1)):
+            for col in range(((outs0[kk]).size())[3]-(neighbourhood-1)):
+                mini_mat0 = outs0[:,:,row:row+neighbourhood-1,col:col+neighbourhood-1]
+                mini_mat1 = outs1[:,:,row:row+neighbourhood-1,col:col+neighbourhood-1]
+                mini_mat0_reshaped = torch.reshape(mini_mat0, [(mini_mat0.size())[0], (mini_mat0.size())[1],(mini_mat0.size())[2] * (mini_mat0.size())[3]])
+                mini_mat1_reshaped = torch.reshape(mini_mat1, [(mini_mat1.size())[0], (mini_mat1.size())[1],(mini_mat1.size())[2] * (mini_mat1.size())[3]])
+                mini_mat0_means = torch.mean(mini_mat0_reshaped, 2)
+                mini_mat0_means = torch.reshape(mini_mat0_means, [(mini_mat0_means.size())[0], (mini_mat0_means.size())[1], 1, 1])
+                mini_mat0_means = mini_mat0_means.expand_as(mini_mat0)
+                mini_mat1_means = torch.mean(mini_mat1_reshaped, 2)
+                mini_mat1_means = torch.reshape(mini_mat1_means, [(outs1.size())[0], (outs1.size())[1], 1, 1])
+                mini_mat1_means = mini_mat1_means.expand_as(mini_mat1)
+                mini_mat0_centered = torch.add(mini_mat0, -1, mini_mat0_means)
+                mini_mat1_centered = torch.add(mini_mat1, -1, mini_mat1_means)
+                prod = torch.mul(mini_mat0_centered, mini_mat1_centered)
+                mini_mat0_squared = torch.pow(mini_mat0_centered, 2)
+                mini_mat1_squared = torch.pow(mini_mat1_centered, 2)
+                mini_mat0_mat_var = torch.sqrt(torch.sum(mini_mat0_squared, (2, 3)))
+                mini_mat1_mat_var = torch.sqrt(torch.sum(mini_mat1_squared, (2, 3)))
+                cov = torch.sum(prod, (2, 3))
+                correlation_coeff = torch.div(cov, torch.mul(mini_mat0_mat_var, mini_mat1_mat_var))
+                both_consts = torch.mul(correlation_coeff != correlation_coeff, cov == 0)
+                correlation_coeff[correlation_coeff != correlation_coeff] = 0
+                # correlation_coeff[both_consts==1] = 1
+                correlation_coeff_tot += torch.sum(torch.abs(correlation_coeff), 1)
+        return correlation_coeff_tot
 
     def forward(self, in0, in1, retPerLayer=False):
         is_median = False
@@ -297,15 +415,21 @@ class PNet(nn.Module):
             elif alt == "Alt8":
                 cur_score = self.Alt8(kk, flat0, flat1, outs0, img)
             elif alt == "Alt9":
-                cur_score = self.Alt9(kk, outs0[kk], outs1[kk])
+                cur_score = self.Alt9(kk, outs0, outs1)
             elif alt == "Alt10":
-                cur_score = self.Alt10(kk, outs0[kk], outs1[kk])
+                cur_score = self.Alt10(kk, outs0, outs1)
             elif alt == "Alt11":
-                cur_score = self.Alt11(kk, outs0[kk], outs1[kk])
+                cur_score = self.Alt11(kk, outs0, outs1)
             elif alt == "Alt12":
-                cur_score = self.Alt12(kk, outs0[kk], outs1[kk])
+                cur_score = self.Alt12(kk, outs0, outs1)
             elif alt == "Alt13":
-                cur_score = self.Alt13(kk, outs0[kk], outs1[kk])
+                cur_score = self.Alt13(kk, outs0, outs1)
+            elif alt == "Alt14":
+                cur_score = self.Alt14(kk, outs0, outs1)
+            elif alt == "Alt15":
+                cur_score = self.Alt15(kk, outs0, outs1)
+            elif alt == "Alt16":
+                cur_score = self.Alt16(kk, outs0, outs1)
                 #############################################################################################
                 # Alternative 1 - Create covariance matrix of 2 features, calc the determinant and accumulate
                 # Result tensor
@@ -408,7 +532,7 @@ class PNet(nn.Module):
 
         if alt in ["Alt9","Alt10"]:
             return torch.reciprocal(val)
-        elif alt in ["Alt11","Alt12","Alt13"]:
+        elif alt in ["Alt11","Alt12","Alt13","Alt14"]:
             return val
         if(retPerLayer):
             return (ten.new_tensor(res_arr,dtype=torch.float64), all_scores)
