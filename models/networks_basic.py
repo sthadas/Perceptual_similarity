@@ -284,6 +284,27 @@ class PNet(nn.Module):
         return torch.sum(diff,1)
 
     ############################################################################################
+    # Alternative 13 - A combination of cos_sim, L1 diff, and eigVals
+    ############################################################################################
+    def Alt13(self,kk, outs0, outs1):
+        # sum_res = self.Alt12(kk,outs0,outs1)
+        # cos_sim_score = (1. - util.cos_sim(outs0, outs1))
+        # cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
+        # # return torch.stack((sum_res,cos_sim_score,cov_res),1)
+        sum_res = self.Alt12(kk, outs0, outs1)
+        # print("finished running alt. #1 of 3...")
+        #  cos_corr = self.Alt11(kk, outs0, outs1)
+        cos_sim_score = (1. - util.cos_sim(outs0[kk], outs1[kk]))
+        # print("finished running alt. #2 of 3...")
+        eig_vals = self.Alt18(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
+        # eig_vals = []
+        # for img in range((outs0[kk].size())[0]):
+        #     eig_vals += [self.Alt17(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0,img)]
+        # eig_vals = (torch.tensor(eig_vals, dtype=torch.float64,device=torch.device('cuda:0'))).float()
+        # print("finished running alt. #3 of 3...")
+        return torch.stack((sum_res, cos_sim_score, eig_vals), 1)
+
+    ############################################################################################
     # Alternative 14 - Like Alt4 but with tensor operations
     ############################################################################################
     def Alt14(self,kk, outs0, outs1):
@@ -319,21 +340,6 @@ class PNet(nn.Module):
             tensor_temp = torch.tensor(temp_res, dtype=torch.float64, device=torch.device('cuda:0'))
             res.append((torch.sum(tensor_temp)).item())
         return (torch.tensor(res,dtype=torch.float64,device=torch.device('cuda:0'))).float()
-    ############################################################################################
-    # Alternative 13 - A combination of cos_sim, L1 diff, and cov
-    ############################################################################################
-    def Alt13(self,kk, outs0, outs1):
-        # sum_res = self.Alt12(kk,outs0,outs1)
-        # cos_sim_score = (1. - util.cos_sim(outs0, outs1))
-        # cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
-        # return torch.stack((sum_res,cos_sim_score,cov_res),1)
-        sum_res = self.Alt12(kk, outs0, outs1)
-        print("finished running alt. #1 of 3...")
-        cos_corr = self.Alt11(kk, outs0, outs1)
-        print("finished running alt. #2 of 3...")
-        eig_vals = self.Alt15(kk, outs0, outs1)
-        print("finished running alt. #3 of 3...")
-        return torch.stack((sum_res, cos_corr, eig_vals), 1)
 
     ############################################################################################
     # Alternative 16 - Calculate correlation coefficient over a neighbourhood of 3 (optional) with tensor operations
@@ -343,18 +349,18 @@ class PNet(nn.Module):
         outs1 = outs1[kk]
         cur_score = 0
         neighbourhood = 3
-        correlation_coeff_tot = torch.zeros(250,dtype=torch.float64,device=torch.device('cuda:0'))
-        for row in range(((outs0[kk]).size())[2]-(neighbourhood-1)):
-            for col in range(((outs0[kk]).size())[3]-(neighbourhood-1)):
-                mini_mat0 = outs0[:,:,row:row+neighbourhood-1,col:col+neighbourhood-1]
-                mini_mat1 = outs1[:,:,row:row+neighbourhood-1,col:col+neighbourhood-1]
+        correlation_coeff_tot = torch.zeros((outs0.size())[0],dtype=torch.float64,device=torch.device('cuda:0')).float()
+        for row in range(((outs0).size())[2]-(neighbourhood-1)):
+            for col in range(((outs0).size())[3]-(neighbourhood-1)):
+                mini_mat0 = outs0[:,:,row:row+neighbourhood,col:col+neighbourhood]
+                mini_mat1 = outs1[:,:,row:row+neighbourhood,col:col+neighbourhood]
                 mini_mat0_reshaped = torch.reshape(mini_mat0, [(mini_mat0.size())[0], (mini_mat0.size())[1],(mini_mat0.size())[2] * (mini_mat0.size())[3]])
                 mini_mat1_reshaped = torch.reshape(mini_mat1, [(mini_mat1.size())[0], (mini_mat1.size())[1],(mini_mat1.size())[2] * (mini_mat1.size())[3]])
                 mini_mat0_means = torch.mean(mini_mat0_reshaped, 2)
                 mini_mat0_means = torch.reshape(mini_mat0_means, [(mini_mat0_means.size())[0], (mini_mat0_means.size())[1], 1, 1])
                 mini_mat0_means = mini_mat0_means.expand_as(mini_mat0)
                 mini_mat1_means = torch.mean(mini_mat1_reshaped, 2)
-                mini_mat1_means = torch.reshape(mini_mat1_means, [(outs1.size())[0], (outs1.size())[1], 1, 1])
+                mini_mat1_means = torch.reshape(mini_mat1_means, [(mini_mat1_means.size())[0], (mini_mat1_means.size())[1], 1, 1])
                 mini_mat1_means = mini_mat1_means.expand_as(mini_mat1)
                 mini_mat0_centered = torch.add(mini_mat0, -1, mini_mat0_means)
                 mini_mat1_centered = torch.add(mini_mat1, -1, mini_mat1_means)
@@ -368,8 +374,77 @@ class PNet(nn.Module):
                 both_consts = torch.mul(correlation_coeff != correlation_coeff, cov == 0)
                 correlation_coeff[correlation_coeff != correlation_coeff] = 0
                 # correlation_coeff[both_consts==1] = 1
-                correlation_coeff_tot += torch.sum(torch.abs(correlation_coeff), 1)
+                correlation_coeff_tot += (torch.sum(torch.abs(correlation_coeff), 1))
+                # correlation_coeff_tot += (torch.sum(torch.max(correlation_coeff, torch.zeros_like(correlation_coeff)), 1))
         return correlation_coeff_tot
+
+    ############################################################################################
+    # Alternative 17 - Distance between sorted eigenvalues of each matrix
+    ############################################################################################
+    def Alt17(self,kk,flat0,flat1,outs0):
+        eig0 = np.linalg.eig(flat0)[0]
+        eig1 = np.linalg.eig(flat1)[0]
+        cur_score = np.sum(np.linalg.norm(np.sort(eig0,2)-np.sort(eig1,2),2,2),1)
+        return (torch.tensor(cur_score,dtype=torch.float64,device=torch.device('cuda:0'))).float()
+
+    ############################################################################################
+    # Alternative 18 - Distance between sum of eigen values, faster than Alt4
+    ############################################################################################
+    def Alt18(self,kk,flat0,flat1,outs0):
+        eig0_sum = np.trace(flat0,0,2,3)
+        eig1_sum = np.trace(flat1,0,2,3)
+        cur_score = np.sum(np.abs(eig0_sum-eig1_sum),1)
+        return (torch.tensor(cur_score,dtype=torch.float64,device=torch.device('cuda:0'))).float()
+
+    ############################################################################################
+    # Alternative 19 - A combination of 4 alternatives: cos_sim, L1 diff, and eigVals (sum and l2 norm)
+    ############################################################################################
+    def Alt19(self,kk, outs0, outs1):
+        # sum_res = self.Alt12(kk,outs0,outs1)
+        # cos_sim_score = (1. - util.cos_sim(outs0, outs1))
+        # cov_res = torch.reciprocal(self.Alt10(kk,outs0,outs1))
+        # # return torch.stack((sum_res,cos_sim_score,cov_res),1)
+        sum_res = self.Alt12(kk, outs0, outs1)
+        # print("finished running alt. #1 of 3...")
+        #  cos_corr = self.Alt11(kk, outs0, outs1)
+        cos_sim_score = (1. - util.cos_sim(outs0[kk], outs1[kk]))
+        # print("finished running alt. #2 of 3...")
+        eig_vals_sum = self.Alt18(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
+
+        eig_vals = self.Alt17(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
+        # eig_vals = []
+        # for img in range((outs0[kk].size())[0]):
+        #     eig_vals += [self.Alt17(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0,img)]
+        # eig_vals = (torch.tensor(eig_vals, dtype=torch.float64,device=torch.device('cuda:0'))).float()
+        # print("finished running alt. #3 of 3...")
+        return torch.stack((sum_res, cos_sim_score, eig_vals_sum,eig_vals), 1)
+
+    ############################################################################################
+    # Alternative 20 - PCA - compare 1 principal components of each feature
+    ############################################################################################
+    def Alt20(self,kk, outs0, outs1):
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        outs0_reshaped = torch.reshape(outs0,[(outs0.size())[0],(outs0.size())[1],(outs0.size())[2]*(outs0.size())[3]])
+        outs1_reshaped = torch.reshape(outs1,[(outs1.size())[0],(outs1.size())[1],(outs1.size())[2]*(outs1.size())[3]])
+        outs0_means = torch.mean(outs0_reshaped,2)
+        outs0_means = torch.reshape(outs0_means,[(outs0.size())[0],(outs0.size())[1],1,1])
+        outs0_means = outs0_means.expand_as(outs0)
+        outs0 = outs0 - outs0_means
+        outs1_means = torch.mean(outs1_reshaped,2)
+        outs1_means = torch.reshape(outs1_means,[(outs1.size())[0],(outs1.size())[1],1,1])
+        outs1_means = outs1_means.expand_as(outs1)
+
+        outs1 = outs1 - outs1_means
+        eigVals0, eigVecs0 = np.linalg.eig(outs0.cpu().data.numpy())
+        eigVals1, eigVecs1 = np.linalg.eig(outs1.cpu().data.numpy())
+
+        U0,_,_ = torch.svd(torch.t(outs0))
+        U1,_,_ = torch.svd(torch.t(outs1))
+        C0 = torch.mm(outs0,U0[:,:3])
+        C1 = torch.mm(outs1,U1[:,:3])
+        cur_score = torch.sum(torch.abs(C0-C1))
+        return (torch.tensor(cur_score, dtype=torch.float64, device=torch.device('cuda:0'))).float()
 
     def forward(self, in0, in1, retPerLayer=False):
         is_median = False
@@ -430,6 +505,15 @@ class PNet(nn.Module):
                 cur_score = self.Alt15(kk, outs0, outs1)
             elif alt == "Alt16":
                 cur_score = self.Alt16(kk, outs0, outs1)
+            elif alt == "Alt17":
+                cur_score = self.Alt17(kk, outs0[kk].cpu().data.numpy(), outs1[kk].cpu().data.numpy(), outs0)
+            elif alt == "Alt18":
+                cur_score = self.Alt18(kk, outs0[kk].cpu().data.numpy(), outs1[kk].cpu().data.numpy(), outs0)
+            elif alt == "Alt19":
+                cur_score = self.Alt19(kk, outs0, outs1)
+            elif alt == "Alt20":
+                cur_score = self.Alt20(kk, outs0, outs1)
+
                 #############################################################################################
                 # Alternative 1 - Create covariance matrix of 2 features, calc the determinant and accumulate
                 # Result tensor
@@ -530,9 +614,9 @@ class PNet(nn.Module):
         # elif alt in ["Alt1"]:
         #     val = ten.new_full((1,), 1-val, dtype=torch.float64)
 
-        if alt in ["Alt9","Alt10"]:
+        if alt in ["Alt9","Alt10","Alt16"]:
             return torch.reciprocal(val)
-        elif alt in ["Alt11","Alt12","Alt13","Alt14"]:
+        elif alt in ["Alt11","Alt12","Alt13","Alt14","Alt17","Alt18","Alt19","Alt20"]:
             return val
         if(retPerLayer):
             return (ten.new_tensor(res_arr,dtype=torch.float64), all_scores)

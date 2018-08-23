@@ -273,14 +273,31 @@ def score_2afc_dataset(alt,data_loader,func):
     d0s = np.array(d0s)
     d1s = np.array(d1s)
     gts = np.array(gts)
+    d0s_temp = []
+    d1s_temp = []
+
     if alt=="Alt13":
-        d0s_temp = []
-        d1s_temp = []
         for j in range(0,d0s.size-1,3):
             temp = d0s[j:j+3] < d1s[j:j+3]
             if temp.sum() >= 2:
                 d0s_temp += [0]
                 d1s_temp += [1]
+            else:
+                d0s_temp += [1]
+                d1s_temp += [0]
+        d0s = d0s_temp
+        d1s = d1s_temp
+        d0s = np.array(d0s)
+        d1s = np.array(d1s)
+    elif alt=="Alt19":
+        for j in range(0,d0s.size-1,4):
+            temp = d0s[j:j+4] < d1s[j:j+4]
+            if temp.sum() > 2:
+                d0s_temp += [0]
+                d1s_temp += [1]
+            elif temp.sum() < 2:
+                d0s_temp += [1]
+                d1s_temp += [0]
             else:
                 d0s_temp += [1]
                 d1s_temp += [0]
