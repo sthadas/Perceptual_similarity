@@ -405,12 +405,14 @@ class PNet(nn.Module):
         sum_res = self.Alt12(kk, outs0, outs1)
         # print("finished running alt. #1 of 4...")
         # cos_sim_score = (1. - util.cos_sim(outs0[kk], outs1[kk]))
+        laplacian = self.Alt25(kk,outs1,outs1)
         # print("finished running alt. #2 of 4...")
         eig_vals_sum = self.Alt18(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
         # print("finished running alt. #3 of 4...")
-        eig_vals = self.Alt17(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
+        # eig_vals = self.Alt17(kk,outs0[kk].cpu().data.numpy(),outs1[kk].cpu().data.numpy(),outs0)
+        tv = self.Alt24(kk,outs0,outs1)
         # print("finished running alt. #4 of 4...")
-        return torch.stack((sum_res, sum_res, eig_vals_sum,eig_vals), 1)
+        return torch.stack((sum_res, laplacian, eig_vals_sum,tv), 1)
 
     ############################################################################################
     # Alternative 20 - Calculate eigen vectors and eigen values, then calculate the distance
@@ -500,32 +502,120 @@ class PNet(nn.Module):
             cur_score += [img_score]
         return (torch.tensor(cur_score, dtype=torch.float64, device=torch.device('cuda:0'))).float()
 
-    # ############################################################################################
-    # # Alternative 22 - PCA - Treating each feature as H*W vector with C num of samples of this vector
-    # ############################################################################################
-    # def Alt22(self,kk, outs0, outs1):
-    #
-    #     outs0 = util.normalize_tensor(outs0[kk])
-    #     outs1 = util.normalize_tensor(outs1[kk])
-    #     outs0_reshaped = torch.reshape(outs0,[(outs0.size())[0],(outs0.size())[1],(outs0.size())[2]*(outs0.size())[3]])
-    #     outs1_reshaped = torch.reshape(outs1,[(outs1.size())[0],(outs1.size())[1],(outs1.size())[2]*(outs1.size())[3]])
-    #     outs0_means = torch.mean(outs0_reshaped,1)
-    #     outs0_reshaped = outs0_reshaped - (torch.reshape(outs0_means,[(outs0.size())[0],1,(outs0_reshaped.size())[2]])).expand_as(outs0_reshaped)
-    #     outs1_means = torch.mean(outs1_reshaped,1)
-    #     outs1_reshaped = outs1_reshaped - (torch.reshape(outs1_means,[(outs1.size())[0],1,(outs1_reshaped.size())[2]])).expand_as(outs1_reshaped)
-    #     outs0 = torch.matmul(torch.transpose(outs0_reshaped,1,2),outs0_reshaped)
-    #     outs1 = torch.matmul(torch.transpose(outs1_reshaped,1,2),outs1_reshaped)
-    #     outs0 = outs0.cpu().data.numpy()
-    #     outs1 = outs1.cpu().data.numpy()
-    #     eigVals0, eigVecs0 = np.linalg.eig(outs0)
-    #     eigVals1, eigVecs1 = np.linalg.eig(outs1)
-    #     maxInd0 = np.argmax(np.abs(eigVals0),1)
-    #     maxInd1 = np.argmax(np.abs(eigVals1),1)
-    #     cur_score = []
-    #     for img in range ((outs0.shape)[0]):
-    #         img_score = np.linalg.norm(eigVecs0[img,maxInd0[img]] - eigVecs1[img,maxInd1[img]],2)
-    #         cur_score += [img_score]
-    #     return (torch.tensor(cur_score, dtype=torch.float64, device=torch.device('cuda:0'))).float()
+    ############################################################################################
+    # Alternative 22 - PCA - treat each (H,W,:) as a sample and find samp-cov matrix, then
+    #                        find principal component
+    ############################################################################################
+    def Alt22(self,kk, outs0, outs1):
+
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        outs0_means = torch.mean(outs0,1,True)
+        outs1_means = torch.mean(outs1,1,True)
+        outs0 = torch.add(outs0,-1,outs0_means.expand_as(outs0))
+        outs1 = torch.add(outs1,-1,outs1_means.expand_as(outs1))
+        outs0 = outs0.reshape([(outs0.size())[0],(outs0.size())[1],(outs0.size())[2]*(outs0.size())[3]])
+        outs1 = outs1.reshape([(outs1.size())[0],(outs1.size())[1],(outs1.size())[2]*(outs1.size())[3]])
+        samp_cov0 = torch.matmul(outs0,torch.transpose(outs0,1,2))
+        samp_cov1 = torch.matmul(outs1,torch.transpose(outs1,1,2))
+        samp_cov0 = samp_cov0.cpu().data.numpy()
+        samp_cov1 = samp_cov1.cpu().data.numpy()
+        eigVals0, eigVecs0 = np.linalg.eig(samp_cov0)
+        eigVals1, eigVecs1 = np.linalg.eig(samp_cov1)
+        maxInd0 = np.argmax(np.abs(eigVals0),1)
+        maxInd1 = np.argmax(np.abs(eigVals1),1)
+        cur_score = []
+        for img in range ((outs0.size())[0]):
+            img_score = np.linalg.norm(eigVecs0[img,maxInd0[img]] - eigVecs1[img,maxInd1[img]],2)
+            cur_score += [img_score]
+        print("finished batch")
+        return (torch.tensor(cur_score, dtype=torch.float64, device=torch.device('cuda:0'))).float()
+
+    ############################################################################################
+    # Alternative 23 - Calculate and compare total variation of each feature
+    ############################################################################################
+    def Alt23(self,kk, outs0, outs1):
+
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        idx = list(range(1,outs0.size()[2])) + [0]
+        tv_rows0 = torch.sum(torch.abs(torch.add(outs0,-1,outs0[:,:,idx,:])),(2,3))
+        tv_rows1 = torch.sum(torch.abs(torch.add(outs1,-1,outs1[:,:,idx,:])),(2,3))
+        cur_score = torch.sum(torch.abs(torch.add(tv_rows1,-1,tv_rows0)),1)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 24 - Trying to improve Alt23
+    ############################################################################################
+    def Alt24(self,kk, outs0, outs1):
+
+        # outs0 = outs0[kk]
+        # outs1 = outs1[kk]
+        outs0 = util.normalize_tensor(outs0[kk])
+        outs1 = util.normalize_tensor(outs1[kk])
+        idx = list(range(1,outs0.size()[2])) + [0]
+        tv_rows0 = torch.sum(torch.abs(torch.add(outs0,-1,outs0[:,:,idx,:])),(2,3))
+        tv_rows1 = torch.sum(torch.abs(torch.add(outs1,-1,outs1[:,:,idx,:])),(2,3))
+        tv_cols0 = torch.sum(torch.abs(torch.add(outs0,-1,outs0[:,:,:,idx])),(2,3))
+        tv_cols1 = torch.sum(torch.abs(torch.add(outs1,-1,outs1[:,:,:,idx])),(2,3))
+        total_tv0 = torch.add(tv_cols0,1,tv_rows0)
+        total_tv1 = torch.add(tv_cols1,1,tv_rows1)
+        cur_score = torch.sum(torch.abs(torch.add(total_tv0,-1,total_tv1)),1)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 25 - Calculating Laplacian over each feature
+    ############################################################################################
+    def Alt25(self,kk, outs0, outs1):
+
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        idx_up = list(range(1,outs0.size()[2])) + [0]
+        idx_down = [outs0.size()[2]-1] + list(range(0,outs0.size()[2]-1))
+        outs0_shift_up = outs0[:,:,idx_up,:]
+        outs0_shift_down = outs0[:,:,idx_down,:]
+        outs0_shift_right = outs0[:,:,:,idx_up]
+        outs0_shift_left = outs0[:,:,:,idx_down]
+        outs1_shift_up = outs1[:,:,idx_up,:]
+        outs1_shift_down = outs1[:,:,idx_down,:]
+        outs1_shift_right = outs1[:,:,:,idx_up]
+        outs1_shift_left = outs1[:,:,:,idx_down]
+        laplacian0 = torch.add(torch.add(torch.add(torch.add(outs0_shift_up,1,outs0_shift_down),1,outs0_shift_left),1,outs0_shift_right),-4,outs0)
+        laplacian1 = torch.add(torch.add(torch.add(torch.add(outs1_shift_up,1,outs1_shift_down),1,outs1_shift_left),1,outs1_shift_right),-4,outs1)
+
+        tot_lap0 = torch.sum(torch.abs(laplacian0),(2,3))
+        tot_lap1 = torch.sum(torch.abs(laplacian1),(2,3))
+        cur_score = torch.sum(torch.abs(torch.add(tot_lap0,-1,tot_lap1)),1)
+        return cur_score
+
+    ############################################################################################
+    # Alternative 26 - Calculating each feature's gradient and sum
+    ############################################################################################
+    def Alt26(self,kk, outs0, outs1):
+
+        outs0 = outs0[kk]
+        outs1 = outs1[kk]
+        idx_up = list(range(1,outs0.size()[2])) + [0]
+        idx_down = [outs0.size()[2]-1] + list(range(0,outs0.size()[2]-1))
+        outs0_shift_up = outs0[:,:,idx_up,:]
+        outs0_shift_down = outs0[:,:,idx_down,:]
+        outs0_shift_right = outs0[:,:,:,idx_up]
+        outs0_shift_left = outs0[:,:,:,idx_down]
+        outs1_shift_up = outs1[:,:,idx_up,:]
+        outs1_shift_down = outs1[:,:,idx_down,:]
+        outs1_shift_right = outs1[:,:,:,idx_up]
+        outs1_shift_left = outs1[:,:,:,idx_down]
+        d_dx0 = torch.div(torch.add(outs0_shift_left,-1,outs0_shift_right),2)
+        d_dy0 = torch.div(torch.add(outs0_shift_down,-1,outs0_shift_up),2)
+        grad0 = torch.sqrt(torch.add(torch.pow(d_dx0,2),1,torch.pow(d_dy0,2)))
+        d_dx1 = torch.div(torch.add(outs1_shift_left,-1,outs1_shift_right),2)
+        d_dy1 = torch.div(torch.add(outs1_shift_down,-1,outs1_shift_up),2)
+        grad1 = torch.sqrt(torch.add(torch.pow(d_dx1,2),1,torch.pow(d_dy1,2)))
+
+        tot_grad0 = torch.sum(grad0,(2,3))
+        tot_grad1 = torch.sum(grad1,(2,3))
+        cur_score = torch.sum(torch.abs(torch.add(tot_grad0,-1,tot_grad1)),1)
+        return cur_score
 
     def forward(self, in0, in1, retPerLayer=False):
         is_median = False
@@ -598,6 +688,14 @@ class PNet(nn.Module):
                 cur_score = self.Alt21(kk, outs0, outs1)
             elif alt == "Alt22":
                 cur_score = self.Alt22(kk, outs0, outs1)
+            elif alt == "Alt23":
+                cur_score = self.Alt23(kk, outs0, outs1)
+            elif alt == "Alt24":
+                cur_score = self.Alt24(kk, outs0, outs1)
+            elif alt == "Alt25":
+                cur_score = self.Alt25(kk, outs0, outs1)
+            elif alt == "Alt26":
+                cur_score = self.Alt26(kk, outs0, outs1)
 
                 #############################################################################################
                 # Alternative 1 - Create covariance matrix of 2 features, calc the determinant and accumulate
@@ -701,7 +799,7 @@ class PNet(nn.Module):
 
         if alt in ["Alt9","Alt10","Alt16"]:
             return torch.reciprocal(val)
-        elif alt in ["Alt11","Alt12","Alt13","Alt14","Alt17","Alt18","Alt19","Alt20","Alt21","Alt22"]:
+        elif alt in ["Alt11","Alt12","Alt13","Alt14","Alt17","Alt18","Alt19","Alt20","Alt21","Alt22","Alt23","Alt24","Alt25","Alt26"]:
             return val
         if(retPerLayer):
             return (ten.new_tensor(res_arr,dtype=torch.float64), all_scores)
